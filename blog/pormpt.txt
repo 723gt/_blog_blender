@@ -193,6 +193,68 @@ if __name__ == "__main__":
 bpy.app.handlers.draw_post_viewはBlender 2.8以降では存在しません。
 Blenderの3Dビューでカスタム描画を行うには、bpy.types.SpaceView3D.draw_handler_addを使う必要があります。~~~
 
+~~ 略 ~~
+
+# ...existing code...
+
+_draw_handler = None  # グローバル変数でハンドラを管理
+
+def draw_ngons_callback():
+    context = bpy.context
+    if not context.object or context.object.mode != 'EDIT' or not context.scene.ngon_color_properties.enable_ngon_color:
+        return
+
+    obj = context.object
+    mesh = obj.data
+
+    if not mesh.is_editmode:
+        return
+
+    gpu.state.depth_test_set('LESS_EQUAL')
+    gpu.state.blend_set('ALPHA')
+
+    shader = shader_2d_flat
+    batch_verts = []
+
+    for poly in mesh.polygons:
+        if len(poly.vertices) >= 5:
+            for i in range(1, len(poly.vertices) - 1):
+                batch_verts.append(obj.matrix_world @ mesh.vertices[poly.vertices[0]].co)
+                batch_verts.append(obj.matrix_world @ mesh.vertices[poly.vertices[i]].co)
+                batch_verts.append(obj.matrix_world @ mesh.vertices[poly.vertices[i+1]].co)
+
+    if batch_verts:
+        batch = batch_for_shader(shader, 'TRIS', {"position": batch_verts})
+        shader.bind()
+        shader.uniform_float("color", (1.0, 0.0, 0.0, 0.5))
+        region_data = context.region_data
+        if region_data:
+            shader.uniform_matrix("ModelViewProjectionMatrix", region_data.perspective_matrix)
+        batch.draw(shader)
+
+    gpu.state.depth_test_set('NONE')
+    gpu.state.blend_set('NONE')
+
+def update_ngon_color_display(self, context):
+    global _draw_handler
+    # 既存のハンドラを解除
+    if _draw_handler is not None:
+        bpy.types.SpaceView3D.draw_handler_remove(_draw_handler, 'WINDOW')
+        _draw_handler = None
+
+    # 有効化時のみ新規登録
+    if context.scene.ngon_color_properties.enable_ngon_color:
+        _draw_handler = bpy.types.SpaceView3D.draw_handler_add(
+            draw_ngons_callback, (), 'WINDOW', 'POST_VIEW'
+        )
+
+    # ビューポートを再描画
+    for area in bpy.context.screen.areas:
+        if area.type == 'VIEW_3D':
+            area.tag_redraw()
+
+# ...existing code...
+```
 エラー潰し
 ```
 次のようなエラーが出ました。実行環境はblender4.3です
@@ -277,4 +339,5 @@ def draw_ngons_callback():
     gpu.state.blend_set('NONE')
 
 # ...existing code...
+
 ```
