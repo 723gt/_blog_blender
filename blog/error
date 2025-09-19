@@ -8,4 +8,12 @@
 # 2
 このエラーは bgl_utils モジュールのインポートに関するものです。Blender 4.3では bgl_utils は存在しないため、このインポートは不要です。
 
+
 以下のように修正してください：
+
+
+Gemini
+
+ユーザーが提供したBlenderアドオンのコードとエラーメッセージを確認しました。
+
+エラーメッセージは PermissionError: [Errno 13] Permission denied: 'c:/Users/eriko/Documents/blender_fbx_modules' となっており、これはPythonが指定されたパス c:/Users/eriko/Documents/blender_fbx_modules をファイルとして開こうとした際に、アクセス権がないために拒否されたことを示しています。
