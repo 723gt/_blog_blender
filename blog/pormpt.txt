@@ -1,0 +1,280 @@
+# FBX
+1. gemini01
+あなたはBlenderのアドオン開発者です。以下の条件に基づいて、Blenderのアドオンコードを生成してください。
+現在blenderのアドオンを開発しようとしています。そこで以下の条件に沿ったアドオンのコードを生成してください
+
+アドオンの概要
+1. オブジェクトモードでShift + A を押した際に特定のフォルダーにある fbxを選択肢として表示する。
+2. 選択したfbxファイルを現在開いてるシーンにインポートする。
+3. fbxが置いてあるフォルダーは "c:/Users/eriko/Documents/blender_fbx_modules" とする
+4. インポートする際に、インポートオプションはデフォルトのままとする。
+5. アドオンの名前は "FBX Importer" とする。
+
+なおこのアドオンはWindows上でblender4.3で動作することを前提としています。
+
+
+2. gemini02
+
+このエラーが表示されました
+DEBUG: execute called. self.filepath:
+~~ 略 ~~
+
+3. gemini03
+
+このエラーが出ました
+Failed to import FBX: Calling operator
+~~ 略 ~~
+
+4. colilot
+このアドオンはblender4.3で動作を想定していますが以下のエラーが出ています。コードに問題がありますか？
+"bpy.ops.wm.fbx_import" error, could not be found
+
+# Nゴン
+
+1. gemini01
+
+```
+あなたはBlenderのアドオンを作るエンジニアです。これから提示する条件に従ったアドオンを開発してください
+条件
+- オブジェクトモードのNキーで展開されるサイドメニューに項目を追加
+- チェックボックスをメニュー内に配置して項目名を「Nゴンをカラー」としてください
+- 動作するBlenderのバージョンは4.3としてください
+このチェックボックス「Nゴンをカラー」を選択した状態でオブジェクトを編集モードにした際五角形以上の面を赤色で表示する機能を持つアドオンを作ってくださいi
+```
+
+出力
+
+```
+import bpy
+import bgl_utils
+from bpy.props import BoolProperty
+from bpy_extras import view3d_utils
+import gpu
+from gpu_extras.batch import batch_for_shader
+
+# シェーダーの定義
+shader_2d_flat = gpu.shader.from_code_vert_frag(
+    """
+    #version 330 core
+    uniform mat4 ModelViewProjectionMatrix;
+    in vec3 position;
+    void main() {
+      gl_Position = ModelViewProjectionMatrix * vec4(position, 1.0);
+    }
+    """,
+    """
+    #version 330 core
+    uniform vec4 color;
+    out vec4 FragColor;
+    void main() {
+      FragColor = color;
+    }
+    """
+)
+
+def draw_ngons_callback(self, context):
+    if not context.object or context.object.mode != 'EDIT' or not context.scene.ngon_color_properties.enable_ngon_color:
+        return
+
+    obj = context.object
+    mesh = obj.data
+
+    if not mesh.is_editmode:
+        return
+
+    # メッシュデータを更新
+    bpy.ops.object.mode_set(mode='OBJECT')
+    bpy.ops.object.mode_set(mode='EDIT')
+
+    gpu.state.depth_test_set('LESS_EQUAL')
+    gpu.state.blend_set('ALPHA')
+
+    shader = shader_2d_flat
+    batch_verts = []
+    batch_indices = []
+    
+    # Nゴンを検出して頂点データを収集
+    for poly in mesh.polygons:
+        if len(poly.vertices) >= 5: # 五角形以上の面
+            # 各面を構成する三角形に分解して描画
+            for i in range(1, len(poly.vertices) - 1):
+                batch_verts.append(obj.matrix_world @ mesh.vertices[poly.vertices[0]].co)
+                batch_verts.append(obj.matrix_world @ mesh.vertices[poly.vertices[i]].co)
+                batch_verts.append(obj.matrix_world @ mesh.vertices[poly.vertices[i+1]].co)
+                batch_indices.append([len(batch_verts) - 3, len(batch_verts) - 2, len(batch_verts) - 1])
+
+    if batch_verts:
+        batch = batch_for_shader(shader, 'TRIS', {"position": batch_verts})
+        shader.bind()
+        shader.uniform_float("color", (1.0, 0.0, 0.0, 0.5))  # 赤色、半透明
+        shader.uniform_matrix("ModelViewProjectionMatrix", context.region_data.perspective_matrix)
+        batch.draw(shader)
+
+    gpu.state.depth_test_set('NONE')
+    gpu.state.blend_set('NONE')
+
+class NgonColorProperties(bpy.types.PropertyGroup):
+    enable_ngon_color: BoolProperty(
+        name="Nゴンをカラー",
+        description="編集モードで五角形以上の面を赤色で表示します",
+        default=False,
+        update=lambda self, context: update_ngon_color_display(self, context)
+    )
+
+def update_ngon_color_display(self, context):
+    # ドローハンドラの登録・解除
+    if context.scene.ngon_color_properties.enable_ngon_color:
+        bpy.app.handlers.draw_post_view.append(draw_ngons_callback)
+    else:
+        if draw_ngons_callback in bpy.app.handlers.draw_post_view:
+            bpy.app.handlers.draw_post_view.remove(draw_ngons_callback)
+    
+    # ビューポートを再描画して変更を反映
+    if context.area:
+        for space in context.area.spaces:
+            if space.type == 'VIEW_3D':
+                space.tag_redraw()
+
+class VIEW3D_PT_NgonColorPanel(bpy.types.Panel):
+    bl_label = "Nゴン設定"
+    bl_idname = "VIEW3D_PT_ngon_color_panel"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "ツール" # サイドメニューのカテゴリ
+
+    def draw(self, context):
+        layout = self.layout
+        scene = context.scene
+        props = scene.ngon_color_properties
+
+        row = layout.row()
+        row.prop(props, "enable_ngon_color")
+
+classes = (
+    NgonColorProperties,
+    VIEW3D_PT_NgonColorPanel,
+)
+
+def register():
+    for cls in classes:
+        bpy.utils.register_class(cls)
+    bpy.types.Scene.ngon_color_properties = bpy.props.PointerProperty(type=NgonColorProperties)
+    
+    # Blender起動時にすでにONの場合に備えてハンドラを登録
+    if bpy.context.scene.ngon_color_properties.enable_ngon_color:
+        if draw_ngons_callback not in bpy.app.handlers.draw_post_view:
+            bpy.app.handlers.draw_post_view.append(draw_ngons_callback)
+
+
+def unregister():
+    # ハンドラが登録されていれば解除
+    if draw_ngons_callback in bpy.app.handlers.draw_post_view:
+        bpy.app.handlers.draw_post_view.remove(draw_ngons_callback)
+    
+    del bpy.types.Scene.ngon_color_properties
+    for cls in reversed(classes):
+        bpy.utils.unregister_class(cls)
+
+if __name__ == "__main__":
+    register()
+```
+
+2. Copilot
+そもそもアドオンとして読み込まれない
+↓
+プロンプト
+```
+このファイルをblenderのアドオンとして読み込ませても表示されません。原因はわかりますか？
+```
+
+出力
+```
+主な原因は、Blenderのドローハンドラの登録方法が間違っていることです。
+bpy.app.handlers.draw_post_viewはBlender 2.8以降では存在しません。
+Blenderの3Dビューでカスタム描画を行うには、bpy.types.SpaceView3D.draw_handler_addを使う必要があります。~~~
+
+エラー潰し
+```
+次のようなエラーが出ました。実行環境はblender4.3です
+Python: Traceback (most recent call last):~~
+
+ret = _op_call(self.idname_py(), kw)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: エラー: No module named 'bgl_utils'
+```
+
+```
+このエラーは Blender 4.0 以降で GPU シェーダーの API が変更されたことが原因です。gpu.shader.from_code_vert_frag() は古い API なので、新しい API に更新する必要があります。
+
+以下のように修正してください：主な原因は、Blenderのドローハンドラの登録方法が間違っていることです。
+bpy.app.handlers.draw_post_viewはBlender 2.8以降では存在しません。
+Blenderの3Dビューでカスタム描画を行うには、bpy.types.SpaceView3D.draw_handler_addを使う必要があります。
+```
+
+```
+# ...existing code...
+
+import bpy
+from bpy.props import BoolProperty
+from bpy_extras import view3d_utils
+import gpu
+from gpu_extras.batch import batch_for_shader
+
+# シェーダーの定義
+vertex_shader = '''
+    uniform mat4 ModelViewProjectionMatrix;
+    in vec3 position;
+    void main() {
+        gl_Position = ModelViewProjectionMatrix * vec4(position, 1.0);
+    }
+'''
+
+fragment_shader = '''
+    uniform vec4 color;
+    out vec4 FragColor;
+    void main() {
+        FragColor = color;
+    }
+'''
+
+shader = gpu.types.GPUShader(vertex_shader, fragment_shader)
+
+_draw_handler = None  # グローバル変数でハンドラを管理
+
+def draw_ngons_callback():
+    context = bpy.context
+    if not context.object or context.object.mode != 'EDIT' or not context.scene.ngon_color_properties.enable_ngon_color:
+        return
+
+    obj = context.object
+    mesh = obj.data
+
+    if not mesh.is_editmode:
+        return
+
+    gpu.state.depth_test_set('LESS_EQUAL')
+    gpu.state.blend_set('ALPHA')
+
+    batch_verts = []
+
+    for poly in mesh.polygons:
+        if len(poly.vertices) >= 5:
+            for i in range(1, len(poly.vertices) - 1):
+                batch_verts.append(obj.matrix_world @ mesh.vertices[poly.vertices[0]].co)
+                batch_verts.append(obj.matrix_world @ mesh.vertices[poly.vertices[i]].co)
+                batch_verts.append(obj.matrix_world @ mesh.vertices[poly.vertices[i+1]].co)
+
+    if batch_verts:
+        batch = batch_for_shader(shader, 'TRIS', {"position": batch_verts})
+        shader.bind()
+        shader.uniform_float("color", (1.0, 0.0, 0.0, 0.5))
+        region_data = context.region_data
+        if region_data:
+            shader.uniform_float("ModelViewProjectionMatrix", region_data.perspective_matrix)
+        batch.draw(shader)
+
+    gpu.state.depth_test_set('NONE')
+    gpu.state.blend_set('NONE')
+
+# ...existing code...
+```
